@@ -3,8 +3,14 @@ from Cython.Build import cythonize
 import numpy as np
 import scipy
 import os
+import sys
 
 cpp_include = os.path.abspath('src_cpp')
+
+if sys.platform == 'win32':
+    compile_args = ['/std:c++17']
+else:
+    compile_args = ['-std=c++17']
 
 ext_modules = [
     Extension(
@@ -20,7 +26,7 @@ ext_modules = [
             'src_python/myldpc/helpers',
         ],
         language='c++',
-        extra_compile_args=['-std=c++17'],
+        extra_compile_args=compile_args,
     ),
 ]
 
@@ -29,7 +35,7 @@ setup(
     version='0.1',
     packages=['myldpc', 'myldpc.bp_decoder', 'myldpc.helpers'],
     package_dir={'': 'src_python'},
-    ext_modules=cythonize(ext_modules, language_level=3),
+    ext_modules=cythonize(ext_modules, language_level=3, include_path=['src_python']),
     install_requires=['numpy', 'scipy', 'cython'],
     zip_safe=False,
 ) 
