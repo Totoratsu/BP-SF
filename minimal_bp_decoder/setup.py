@@ -6,6 +6,14 @@ import os
 
 cpp_include = os.path.abspath('src_cpp')
 
+<<<<<<< Updated upstream
+=======
+if sys.platform == 'win32':
+    compile_args = ['/std:c++17', '/O2', '/DNDEBUG']
+else:
+    compile_args = ['-std=c++17', '-O3', '-DNDEBUG']
+
+>>>>>>> Stashed changes
 ext_modules = [
     Extension(
         'myldpc.bp_decoder._bp_decoder',
