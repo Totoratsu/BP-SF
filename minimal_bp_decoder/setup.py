@@ -22,6 +22,7 @@ ext_modules = [
             cpp_include,
             np.get_include(),
             os.path.join(os.path.dirname(scipy.__file__), 'include'),
+            'src_python',
             'src_python/myldpc/bp_decoder',
             'src_python/myldpc/helpers',
         ],
@@ -35,7 +36,7 @@ setup(
     version='0.1',
     packages=['myldpc', 'myldpc.bp_decoder', 'myldpc.helpers'],
     package_dir={'': 'src_python'},
-    ext_modules=cythonize(ext_modules, language_level=3),
+    ext_modules=cythonize(ext_modules, language_level=3, include_path=['src_python']),
     install_requires=['numpy', 'scipy', 'cython'],
     zip_safe=False,
 ) 
