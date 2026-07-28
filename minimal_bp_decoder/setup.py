@@ -3,17 +3,15 @@ from Cython.Build import cythonize
 import numpy as np
 import scipy
 import os
+import sys
 
 cpp_include = os.path.abspath('src_cpp')
 
-<<<<<<< Updated upstream
-=======
 if sys.platform == 'win32':
     compile_args = ['/std:c++17', '/O2', '/DNDEBUG']
 else:
     compile_args = ['-std=c++17', '-O3', '-DNDEBUG']
 
->>>>>>> Stashed changes
 ext_modules = [
     Extension(
         'myldpc.bp_decoder._bp_decoder',
@@ -28,7 +26,7 @@ ext_modules = [
             'src_python/myldpc/helpers',
         ],
         language='c++',
-        extra_compile_args=['-std=c++17'],
+        extra_compile_args=compile_args,
     ),
 ]
 
