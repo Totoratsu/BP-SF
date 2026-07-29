@@ -4,23 +4,33 @@ from typing import List, FrozenSet, Dict
 from scipy.sparse import csc_matrix
 
 
-def bb_mem_circuit(BBObject, n, d, obs, physicalError):
+def bb_mem_circuit(BBObject, n, d, obs, physicalError, z_basis=True):
     """
     Originally implemented by John Stack
     BBObject: (css_code, A, B)
+
+    z_basis: which logical memory experiment to build (default True, matching every
+    existing caller in this repo — test.py/cbb_test.py only ever ran the Z-basis
+    experiment, so this parameter is additive and does not change their behavior).
+    Only data-qubit prep/readout basis and which logical operator (lz vs lx) is used
+    depend on z_basis. The X-check/Z-check ancilla measurement basis in
+    extractionRound() is NOT varied with z_basis: it is fixed by the stabilizer type
+    (X-checks always read out via MRX, Z-checks via MRZ) independent of which logical
+    memory experiment is being run, exactly like build_circuit.py's equivalent
+    construction (its Round 7/8 ancilla measurements never depend on z_basis either).
     """
 
     myCircuitBuilder = CircuitBuilder(BBObject, d, physicalError, n,1)
-    myCircuitBuilder.initQubits(0, errors=True)
+    myCircuitBuilder.initQubits(0, errors=True, zBasis=z_basis)
     myCircuitBuilder.extractionRound([0],firstPass=True, errors=True)
 
     for i in range(d-1):
         myCircuitBuilder.extractionRound([0],firstPass=False, errors=True)
 
-    myCircuitBuilder.measureDataQubits([0])
-    myCircuitBuilder.endOfCircuitDetectorsForLogicalMeasurementReadout(0)
+    myCircuitBuilder.measureDataQubits([0], zBasis=z_basis)
+    myCircuitBuilder.endOfCircuitDetectorsForLogicalMeasurementReadout(0, zBasis=z_basis)
 
-    myCircuitBuilder.obsOffset( 0, 0)
+    myCircuitBuilder.obsOffset(0, 0, zBasis=z_basis)
 
     return myCircuitBuilder.getCirc()
 
@@ -96,19 +106,23 @@ class CircuitBuilder:
         self.measureTracker[0][qubit] = 1
     
 
-    def initQubits(self, cbArrIndex, errors=True):
+    def initQubits(self, cbArrIndex, errors=True, zBasis=True):
+        # X-check/Z-check ancilla prep is fixed regardless of logical memory basis
+        # (matches build_circuit.py's equivalent unconditional ancilla init). Only
+        # the L/R data-qubit prep basis follows the logical memory basis: |0>_L for
+        # a Z-basis memory experiment, |+>_L for X-basis.
         for i in range(self.n//2):
             self.c.append("RX", self.cbArr[cbArrIndex][0][i])
             if errors: self.c.append("Z_ERROR", self.cbArr[cbArrIndex][0][i], self.p_after_reset_flip_probability)
 
         for i in range(self.n//2):
-            self.c.append("RZ", self.cbArr[cbArrIndex][1][i])
-            if errors: self.c.append("X_ERROR", self.cbArr[cbArrIndex][1][i], self.p_after_reset_flip_probability)
+            self.c.append("RZ" if zBasis else "RX", self.cbArr[cbArrIndex][1][i])
+            if errors: self.c.append("X_ERROR" if zBasis else "Z_ERROR", self.cbArr[cbArrIndex][1][i], self.p_after_reset_flip_probability)
 
         for i in range(self.n//2):
-            self.c.append("RZ", self.cbArr[cbArrIndex][2][i])
-            if errors: self.c.append("X_ERROR", self.cbArr[cbArrIndex][2][i], self.p_after_reset_flip_probability)
-        
+            self.c.append("RZ" if zBasis else "RX", self.cbArr[cbArrIndex][2][i])
+            if errors: self.c.append("X_ERROR" if zBasis else "Z_ERROR", self.cbArr[cbArrIndex][2][i], self.p_after_reset_flip_probability)
+
         for i in range(self.n//2):
             self.c.append("RZ", self.cbArr[cbArrIndex][3][i])
             if errors: self.c.append("X_ERROR", self.cbArr[cbArrIndex][3][i], self.p_after_reset_flip_probability)
@@ -134,18 +148,16 @@ class CircuitBuilder:
             
 
     def extractionRound(self, cbArrIndicies, firstPass=False, errors=True, latticeSurgery=False, latticeSurgeryFirstTime=False, latticeSurgerySSIPObj=None, latticeSurgeryEnd=False, zBasis=True):
-
-        if zBasis == False:
-            for cbArrIndex in cbArrIndicies:
-                cb = self.cbArr[cbArrIndex]
-                for i in range(self.n // 2):
-                    #bit clunky but ensures basis appropriate if suddenly change...
-                    self.c.append("RZ", cb[0][i])
-                    if errors: self.c.append("Z_ERROR" if zBasis else "X_ERROR", cb[0][i], self.p_after_reset_flip_probability)
-                    self.c.append("RX", cb[3][i])
-                    if errors: self.c.append("X_ERROR" if zBasis else "Z_ERROR", cb[3][i], self.p_after_reset_flip_probability)
-
-
+        # NOTE: the X-check (cb[0]) / Z-check (cb[3]) ancilla measurement basis is
+        # NOT varied with zBasis: it is fixed by the CNOT wiring above (cb[0] always
+        # accumulates X-parity info via the fixed CX pattern, cb[3] always
+        # accumulates Z-parity info), exactly like build_circuit.py's equivalent
+        # round7/8 ancilla measurements, which never depend on z_basis either. What
+        # DOES depend on zBasis is which check's syndrome history is used to build
+        # detectors: a Z-basis memory experiment (data prepped in |0>_L) only needs
+        # Z-check (cb[3]) detectors to track X-type errors; an X-basis experiment
+        # (data prepped in |+>_L) only needs X-check (cb[0]) detectors to track
+        # Z-type errors — see bb_mem_circuit()'s z_basis docstring.
 
         # round 1
 
@@ -266,13 +278,13 @@ class CircuitBuilder:
             for i in range(self.n // 2):
                 self.c.append("CX", (cb[0][i], cb[1][self.get1Loc(self.A3, i)]))
                 if errors: self.c.append("DEPOLARIZE2", (cb[0][i], cb[1][self.get1Loc(self.A3, i)]), self.p_after_clifford_depolarization)
-                if errors: self.c.append("X_ERROR" if zBasis else "Z_ERROR", cb[3][i], self.p_before_measure_flip_probability)
-                
-                self.c.append("MRZ" if zBasis  else "MRX", cb[3][i])
-                
+                if errors: self.c.append("X_ERROR", cb[3][i], self.p_before_measure_flip_probability)
+
+                self.c.append("MRZ", cb[3][i])
+
                 self.measureUpdateTracker(cb[3][i])
-                if errors: self.c.append("X_ERROR" if zBasis else "Z_ERROR", cb[3][i], self.p_after_reset_flip_probability) #round 8 initZ
-            
+                if errors: self.c.append("X_ERROR", cb[3][i], self.p_after_reset_flip_probability) #round 8 initZ
+
             self.number2qGates += self.n//2
             self.numberMeasurements += self.n//2
 
@@ -282,14 +294,15 @@ class CircuitBuilder:
             for i in range(self.n // 2):
                 if errors: self.c.append("DEPOLARIZE1", cb[2][i], self.p_before_round_data_depolarization) #idle r round 7
 
-        if firstPass:
-            for i in range(len(cbArrIndicies) * (self.n // 2), 0, -1):
-                self.c.append("DETECTOR", stim.target_rec(-i))
-        else:
-            for cbArrIndex in cbArrIndicies:
-                cb = self.cbArr[cbArrIndex]
-                for qubit in cb[3]:
-                    self.c.append("DETECTOR", (stim.target_rec(-self.measureTracker[0][qubit]), stim.target_rec(-self.measureTracker[1][qubit])))
+        if zBasis:
+            if firstPass:
+                for i in range(len(cbArrIndicies) * (self.n // 2), 0, -1):
+                    self.c.append("DETECTOR", stim.target_rec(-i))
+            else:
+                for cbArrIndex in cbArrIndicies:
+                    cb = self.cbArr[cbArrIndex]
+                    for qubit in cb[3]:
+                        self.c.append("DETECTOR", (stim.target_rec(-self.measureTracker[0][qubit]), stim.target_rec(-self.measureTracker[1][qubit])))
 
         self.c.append("TICK")
 
@@ -311,12 +324,22 @@ class CircuitBuilder:
         for cbArrIndex in cbArrIndicies:
             cb = self.cbArr[cbArrIndex]
             for i in range(self.n // 2):
-                if errors: self.c.append("Z_ERROR" if zBasis else "X_ERROR", cb[0][i], self.p_before_measure_flip_probability)
-                self.c.append("MRX" if zBasis else "MRZ", cb[0][i])
+                if errors: self.c.append("Z_ERROR", cb[0][i], self.p_before_measure_flip_probability)
+                self.c.append("MRX", cb[0][i])
                 self.measureUpdateTracker(cb[0][i])
-                if errors: self.c.append("Z_ERROR" if zBasis else "X_ERROR", cb[0][i], self.p_after_reset_flip_probability)#round 1 init X
+                if errors: self.c.append("Z_ERROR", cb[0][i], self.p_after_reset_flip_probability)#round 1 init X
 
             self.numberMeasurements += self.n//2
+
+        if not zBasis:
+            if firstPass:
+                for i in range(len(cbArrIndicies) * (self.n // 2), 0, -1):
+                    self.c.append("DETECTOR", stim.target_rec(-i))
+            else:
+                for cbArrIndex in cbArrIndicies:
+                    cb = self.cbArr[cbArrIndex]
+                    for qubit in cb[0]:
+                        self.c.append("DETECTOR", (stim.target_rec(-self.measureTracker[0][qubit]), stim.target_rec(-self.measureTracker[1][qubit])))
 
         for cbArrIndex in cbArrIndicies:
             cb = self.cbArr[cbArrIndex]
@@ -344,19 +367,22 @@ class CircuitBuilder:
                         det_str += f" rec[{-self.measureTracker[0][cb[1][ind]]}]" #left register??
                     else:
                         det_str += f" rec[{-self.measureTracker[0][cb[2][ind-(self.n//2)]]}]" #right register???
-                # if z_basis else f" rec[{-n-n//2+i}]"
-                det_str += f" rec[{-self.measureTracker[0][cb[3][i]]}]"
+                # Compare against the last measurement of whichever ancilla actually
+                # tracked this stabilizer's syndrome history: cb[3] (Z-check) for a
+                # Z-basis experiment, cb[0] (X-check) for X-basis — must match the
+                # ancilla type extractionRound() used for its detectors above.
+                det_str += f" rec[{-self.measureTracker[0][cb[3][i] if zBasis else cb[0][i]]}]"
                 det_str += "\n"
                 stab_detector_circuit_str += det_str
             stab_detector_circuit = stim.Circuit(stab_detector_circuit_str)
             self.c += stab_detector_circuit
 
 
-    def obsOffset(self, cbIndex, offsetI):
+    def obsOffset(self, cbIndex, offsetI, zBasis=True):
 
         cb = self.cbArr[cbIndex]
 
-        logical_pcm = self.code.lz
+        logical_pcm = self.code.lz if zBasis else self.code.lx
         log_detector_circuit_str = ""  # logical operators
         for i, l in enumerate(logical_pcm):
             
